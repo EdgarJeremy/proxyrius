@@ -14,7 +14,8 @@ clone_folder=$rep_name.$branch_name
 docker_name=$clone_folder
 
 cd ./pr
-rm -rf $clone_folder
 docker container stop $docker_name >/dev/null 2>&1
 docker container rm $docker_name >/dev/null 2>&1
 docker rmi $docker_name
+
+rm -rf $clone_folder

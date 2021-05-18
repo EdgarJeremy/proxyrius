@@ -48,37 +48,53 @@ const verifyDigest = (req, res, next) => {
     return next()
 }
 
+const createContainer = (clone_url, name, ref, writeRecord = true, cb = function () { }) => {
+    cp.exec(`./createContainer.sh ${clone_url} ${name} ${ref}`, (err, stdout, stderr) => {
+        if (err) return console.log('Error: ', err);
+        if (stderr) return console.log('Error: ', stderr);
+        const container_ip = stdout.trim();
+        const subdomain = ref + (env.SUBDOMAIN_AFFIX ? ('.' + env.SUBDOMAIN_AFFIX) : '');
+        const server = container_ip + ':' + env.APP_PORT;
+        if (writeRecord) {
+            records.push({ subdomain, server });
+            fs.writeFileSync(path.resolve(__dirname, 'storage', 'records.json'), JSON.stringify(records));
+        }
+        cb();
+    });
+}
+
+const removeContainer = (name, ref, writeRecord = true, cb = function () { }) => {
+    cp.exec(`./removeContainer.sh ${name} ${ref}`, (err, stdout, stderr) => {
+        if (err) return console.log('Error: ', err);
+        if (stderr) return console.log('Error: ', stderr);
+        const subdomain = ref + (env.SUBDOMAIN_AFFIX ? ('.' + env.SUBDOMAIN_AFFIX) : '');
+        const idx = _.findIndex(records, ['subdomain', subdomain]);
+        if (writeRecord) {
+            records.splice(idx, 1);
+            fs.writeFileSync(path.resolve(__dirname, 'storage', 'records.json'), JSON.stringify(records));
+        }
+        cb();
+    });
+}
+
 app.post('/update', verifyDigest, (req, res) => {
     const { action, pull_request, repository } = req.body;
     if (action === 'opened' || action === 'reopened') {
         const { head: { ref } } = pull_request;
         const { name, clone_url } = repository;
-
-        console.log('Action: ', action);
-        console.log('Repo Name: ', name);
-        console.log('Branch: ', ref);
-        console.log('Clone URL: ', clone_url);
-
-        cp.exec(`./createContainer.sh ${clone_url} ${name} ${ref}`, (err, stdout, stderr) => {
-            if (err) return console.log('Error: ', err);
-            if (stderr) return console.log('Error: ', stderr);
-            const container_ip = stdout;
-            const subdomain = ref + '.' + env.SUBDOMAIN_AFFIX;
-            const server = container_ip + ':' + env.APP_PORT;
-            records.push({ subdomain, server });
-            fs.writeFileSync(path.resolve(__dirname, 'storage', 'records.json'), JSON.stringify(records));
-        });
+        createContainer(clone_url, name, ref);
     } else if (action === 'closed') {
         const { head: { ref } } = pull_request;
         const { name } = repository;
-        cp.exec(`./removeContainer.sh ${name} ${ref}`, (err, stdout, stderr) => {
-            if (err) return console.log('Error: ', err);
-            if (stderr) return console.log('Error: ', stderr);
-            const subdomain = ref + '.' + env.SUBDOMAIN_AFFIX;
-            const idx = _.findIndex(records, ['subdomain', subdomain]);
-            records.splice(idx, 1);
-            fs.writeFileSync(path.resolve(__dirname, 'storage', 'records.json'), JSON.stringify(records));
-        });
+        removeContainer(name, ref);
+    } else if (action === 'synchronize') {
+        const { head: { ref } } = pull_request;
+        const { name, clone_url } = repository;
+        if (ref !== 'master') {
+            removeContainer(name, ref, false, () => {
+                createContainer(clone_url, name, ref, false);
+            });
+        }
     }
     res.send({ ok: true });
 });
